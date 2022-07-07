@@ -10,9 +10,9 @@ on:
     branches: [devel]
 
 jobs:
-  pull_request:
+  molecule:
     runs-on: ubuntu-18.04
-    name: pull_request
+    name: molecule
     env:
       DOCKER_API_VERSION: "1.38"
     steps:
@@ -24,28 +24,43 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install \
-            molecule \
-            molecule-docker \
-            yamllint \
-            ansible-lint \
-            openshift \
-            jmespath \
-            ansible-core
+          pip install -r molecule/requirements.txt
 
       - name: Install Collections
         run: |
-         ansible-galaxy collection install community.general kubernetes.core:1.2.1 operator_sdk.util
-
-      - name: Setup Minikube
-        uses: manusa/actions-setup-minikube@v2.4.2
-        with:
-          minikube version: 'v1.16.0'
-          kubernetes version: 'v1.19.2'
-          github token: ${{ secrets.GITHUB_TOKEN }}
+          ansible-galaxy collection install -r molecule/requirements.yml
 
       - name: Run Molecule
         env:
           MOLECULE_VERBOSITY: 3
+          PY_COLORS: '1'
+          ANSIBLE_FORCE_COLOR: '1'
         run: |
-          molecule test -s test-minikube
+          sudo rm -f $(which kustomize)
+          make kustomize
+          KUSTOMIZE_PATH=$(readlink -f bin/kustomize) molecule test -s kind
+  helm:
+    runs-on: ubuntu-18.04
+    name: helm
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Create k8s Kind Cluster
+        uses: helm/kind-action@v1.2.0
+
+      - name: Build operator image and load into kind
+        run: |
+          IMG=awx-operator-ci make docker-build
+          kind load docker-image --name chart-testing awx-operator-ci
+
+      - name: Patch pull policy for tests
+        run: |
+          kustomize edit add patch --path ../testing/pull_policy/Never.yaml
+        working-directory: config/default
+
+      - name: Build and install helm chart
+        run: |
+          IMG=awx-operator-ci make helm-chart
+          helm install --wait my-awx-operator ./charts/awx-operator

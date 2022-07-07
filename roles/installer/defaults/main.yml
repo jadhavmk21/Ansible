@@ -10,6 +10,7 @@ task_privileged: false
 service_type: ClusterIP
 ingress_type: none
 ingress_path: '/'
+ingress_path_type: 'Prefix'
 # Add annotations to the service account. Specify as literal block. E.g.:
 # service_account_annotations: |
 #   eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/<IAM_ROLE_NAME>
@@ -35,8 +36,9 @@ ingress_tls_secret: ''
 
 loadbalancer_protocol: 'http'
 loadbalancer_port: '80'
-loadbalancer_annotations: ''
+service_annotations: ''
 
+nodeport_port: '30080'
 # The TLS termination mechanism to use to access
 # the services. Supported mechanism are: edge, passthrough
 #
@@ -52,7 +54,7 @@ route_tls_secret: ''
 #
 route_host: ''
 
-hostname: '{{ meta.name }}.example.com'
+hostname: ''
 
 # Add a nodeSelector for the AWX pods. It must match a node's labels for the pod
 # to be scheduled on that node. Specify as literal block. E.g.:
@@ -62,6 +64,17 @@ hostname: '{{ meta.name }}.example.com'
 #   kubernetes.io/os: linux
 node_selector: ''
 
+# Add a topologySpreadConstraints for the AWX pods.
+# Specify as literal block. E.g.:
+# topology_spread_constraints: |
+#   - maxSkew: 100
+#     topologyKey: "topology.kubernetes.io/zone"
+#     whenUnsatisfiable: "ScheduleAnyway"
+#     labelSelector:
+#       matchLabels:
+#         app.kubernetes.io/name: "<resourcename>"
+topology_spread_constraints: ''
+
 # Add node tolerations for the AWX pods. Specify as literal block. E.g.:
 # tolerations: |
 #   - key: "dedicated"
@@ -69,6 +82,12 @@ node_selector: ''
 #     value: "AWX"
 #     effect: "NoSchedule"
 tolerations: ''
+
+# Add annotations to awx pods. Specify as literal block. E.g.:
+# annotations: |
+#   my.annotation/1: value
+#   my.annotation/2: value2
+annotations: ''
 
 admin_user: admin
 admin_email: test@example.com
@@ -105,16 +124,16 @@ extra_volumes: ''
 
 # Use these image versions for Ansible AWX.
 
-image: quay.io/ansible/awx
-image_version: 19.2.2
-redis_image: docker.io/redis
-redis_image_version: latest
-postgres_image: postgres
-postgres_image_version: 12
-init_container_image: quay.io/centos/centos
-init_container_image_version: 8
+_image: quay.io/ansible/awx
+_image_version: "{{ lookup('env', 'DEFAULT_AWX_VERSION') or 'latest' }}"
+_redis_image: docker.io/redis
+_redis_image_version: 7
+_postgres_image: postgres
+_postgres_image_version: 12
+_init_container_image: quay.io/centos/centos
+_init_container_image_version: stream8
 image_pull_policy: IfNotPresent
-image_pull_secret: ''
+image_pull_secrets: []
 
 # Extra commands which will be appended to the initContainer
 # Make sure that each command entered return an exit code 0
@@ -136,7 +155,7 @@ ee_images:
   - name: AWX EE (latest)
     image: quay.io/ansible/awx-ee:latest
 
-control_plane_ee_image: quay.io/ansible/awx-ee:latest
+_control_plane_ee_image: quay.io/ansible/awx-ee:latest
 
 create_preload_data: true
 
@@ -145,24 +164,36 @@ replicas: "1"
 task_args:
   - /usr/bin/launch_awx_task.sh
 task_command: []
-web_args: []
+web_args:
+  - /usr/bin/launch_awx.sh
 web_command: []
 
 task_resource_requirements:
   requests:
-    cpu: 500m
-    memory: 1Gi
+    cpu: 100m
+    memory: 128Mi
 
 web_resource_requirements:
   requests:
-    cpu: 1000m
-    memory: 2Gi
+    cpu: 100m
+    memory: 128Mi
 
 ee_resource_requirements:
   requests:
-    cpu: 500m
-    memory: 1Gi
+    cpu: 100m
+    memory: 64Mi
 
+# Customize CSRF options
+csrf_cookie_secure: False
+session_cookie_secure: False
+
+# Assign a preexisting priority class to the control plane pods
+control_plane_priority_class: ''
+
+redis_resource_requirements:
+  requests:
+    cpu: 50m
+    memory: 64Mi
 # Add extra environment variables to the AWX task/web containers. Specify as
 # literal block. E.g.:
 # task_extra_env: |
@@ -203,7 +234,16 @@ postgres_tolerations: ''
 postgres_storage_requirements:
   requests:
     storage: 8Gi
-postgres_resource_requirements: {}
+postgres_resource_requirements:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+postgres_init_container_resource_requirements:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+# Assign a preexisting priority class to the postgres pod
+postgres_priority_class: ''
 postgres_data_path: '/var/lib/postgresql/data/pgdata'
 
 # Persistence to the AWX project data folder
@@ -213,6 +253,9 @@ projects_persistence: false
 # Define an existing PersistentVolumeClaim to use
 projects_existing_claim: ''
 #
+# Define postgres configuration arguments to use
+postgres_extra_args: ''
+
 # Define the storage_class, size and access_mode
 # when not using an existing claim
 projects_storage_size: 8Gi
@@ -224,6 +267,9 @@ ca_trust_bundle: "/etc/pki/tls/certs/ca-bundle.crt"
 #
 ldap_cacert_secret: ''
 
+# Secret to lookup that provides the LDAP bind password
+ldap_password_secret: ''
+
 # Secret to lookup that provides the custom CA trusted bundle
 bundle_cacert_secret: ''
 
@@ -233,3 +279,12 @@ bundle_cacert_secret: ''
 garbage_collect_secrets: false
 
 development_mode: false
+
+security_context_settings: {}
+
+# Set no_log settings on certain tasks
+no_log: 'true'
+
+# Should AWX instances be automatically upgraded when operator gets upgraded
+#
+auto_upgrade: true
